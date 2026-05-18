@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <!-- スマホアプリのように画面を固定する設定 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>訪問鍼灸アプリ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "react": "https://esm.sh/react@18.2.0",
+                "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+                "lucide-react": "https://esm.sh/lucide-react@0.292.0?deps=react@18.2.0"
+            }
+        }
+    </script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        /* モバイル操作時のハイライトを消す設定 */
+        body { -webkit-tap-highlight-color: transparent; }
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom, 20px); }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useRef, useEffect } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { Pen, Eraser, Save, User, FileText, CheckCircle, Stethoscope, MapPin, Percent, UserCircle, RefreshCcw, Sparkles, Loader2, Info, Users, Navigation, Phone, Calendar, AlertCircle } from 'lucide-react';
+
+        // ==========================================
+        // 🔴 必須設定：GASのウェブアプリURL 🔴
+        // ==========================================
+        const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyzKXEjzeCnt25coqe2ItRkgFhu-rQUMY5hZnVi2wE-6A8Rpa_oorPPkFNYmOPUIpBBNA/exec';
+
+        const SCHEDULE_DATA = [
+          { id: 1, staff: '森', name: '山田 太郎', time: '10:00', address: '大阪府守口市〇〇1-2-3', phone: '090-1111-2222', status: '定期訪問' },
+          { id: 2, staff: '森', name: '高橋 健太', time: '13:00', address: '大阪府門真市〇〇4-5-6', phone: '080-2222-3333', status: '定期訪問' },
+          { id: 3, staff: '野口', name: '佐藤 花子', time: '09:30', address: '大阪府寝屋川市〇〇7-8-9', phone: '080-3333-4444', status: '要・急患対応' },
+          { id: 4, staff: '西山', name: '鈴木 一郎', time: '15:00', address: '大阪府守口市〇〇10-11', phone: '070-5555-6666', status: '来院予定' },
+        ];
+
+        function App() {
+          const [activeTab, setActiveTab] = useState('patients');
+          const [currentStaff, setCurrentStaff] = useState('森'); 
+          const STAFF_NAMES = ['森', '野口', '西山', '岡島'];
+
+          const [formData, setFormData] = useState({
+            staffName: '森', visitType: '再検', locationType: '往診', distance: '', insuranceRate: '1割', patientName: '',
+            date: new Date().toISOString().split('T')[0], chiefComplaint: '',
+            treatmentTypes: { acupuncture: false, massage: false }, acupunctureDisease: '', acupunctureDetails: [],
+            massageAreas: [], massageDetails: [], notes: ''
+          });
+
+          const [isSaving, setIsSaving] = useState(false);
+          const [isSaved, setIsSaved] = useState(false);
+          const [saveError, setSaveError] = useState('');
+          const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+          const canvasRef = useRef(null);
+          const containerRef = useRef(null);
+          const [isDrawing, setIsDrawing] = useState(false);
+          const [color, setColor] = useState('#ef4444');
+          const [lineWidth, setLineWidth] = useState(4);
+
+          const INSURANCE_RATES = ['1割', '2割', '3割', '0割'];
+          const ACUPUNCTURE_DISEASES = ['神経痛', 'リウマチ', '頸肩腕症候群', '五十肩', '腰痛症', '頸椎捻挫後遺症'];
+          const MASSAGE_AREAS = ['躯幹', '右上肢', '左上肢', '右下肢', '左下肢'];
+          const ACUPUNCTURE_OPTIONS = ['毫鍼（ごうしん）', '円皮鍼', '灸頭鍼', '台座灸', '透熱灸', '小児鍼', '電気鍼(パルス)'];
+          const MASSAGE_OPTIONS = ['指圧', '揉捏', '軽擦', 'ストレッチ', '関節モビライゼーション', 'オイルマッサージ', 'あん摩'];
+
+          useEffect(() => { setFormData(prev => ({ ...prev, staffName: currentStaff })); }, [currentStaff]);
+          const filteredSchedule = SCHEDULE_DATA.filter(item => item.staff === currentStaff);
+
+          useEffect(() => {
+            if (activeTab !== 'record' || !canvasRef.current || !containerRef.current) return;
+            const canvas = canvasRef.current;
+            const container = containerRef.current;
+            const ctx = canvas.getContext('2d');
+            const resizeCanvas = () => {
+              const tempCanvas = document.createElement('canvas');
+              const tempCtx = tempCanvas.getContext('2d');
+              tempCanvas.width = canvas.width; tempCanvas.height = canvas.height;
+              if (canvas.width > 0 && canvas.height > 0) tempCtx.drawImage(canvas, 0, 0);
+              canvas.width = container.clientWidth; canvas.height = container.clientHeight;
+              ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.drawImage(tempCanvas, 0, 0);
+            };
+            setTimeout(resizeCanvas, 50);
+            window.addEventListener('resize', resizeCanvas);
+            return () => window.removeEventListener('resize', resizeCanvas);
+          }, [activeTab]);
+
+          const handleInputChange = (e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+          const handleRadioChange = (name, value) => setFormData(prev => ({ ...prev, [name]: value, ...(name === 'locationType' && value === '来院' ? { distance: '' } : {}) }));
+          const handleTypeChange = (type) => setFormData(prev => ({ ...prev, treatmentTypes: { ...prev.treatmentTypes, [type]: !prev.treatmentTypes[type] } }));
+          const handleDetailToggle = (type, option, isArea = false) => {
+            setFormData(prev => {
+              let key = type === 'acupuncture' ? 'acupunctureDetails' : (isArea ? 'massageAreas' : 'massageDetails');
+              let targetArray = prev[key];
+              return targetArray.includes(option) ? { ...prev, [key]: targetArray.filter(i => i !== option) } : { ...prev, [key]: [...targetArray, option] };
+            });
+          };
+
+          const getCoordinates = (e) => {
+            const rect = canvasRef.current.getBoundingClientRect();
+            return e.touches && e.touches.length > 0 
+              ? { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top }
+              : { x: e.clientX - rect.left, y: e.clientY - rect.top };
+          };
+
+          const startDrawing = (e) => { e.preventDefault(); const { x, y } = getCoordinates(e); const ctx = canvasRef.current.getContext('2d'); ctx.beginPath(); ctx.moveTo(x, y); setIsDrawing(true); };
+          const draw = (e) => { e.preventDefault(); if (!isDrawing) return; const { x, y } = getCoordinates(e); const ctx = canvasRef.current.getContext('2d'); ctx.strokeStyle = color; ctx.lineWidth = lineWidth; ctx.lineTo(x, y); ctx.stroke(); };
+          const stopDrawing = () => setIsDrawing(false);
+          const clearCanvas = () => canvasRef.current.getContext('2d').clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+
+          const generateAIText = async () => {
+            if (!formData.notes.trim()) return alert("メモを入力してください。");
+            if (GAS_WEB_APP_URL.includes('ここにコピーした')) return alert("設定エラー: GASのURLが設定されていません。");
+            setIsGeneratingAI(true); setSaveError('');
+            try {
+              const response = await fetch(GAS_WEB_APP_URL, {
+                method: 'POST', headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify({ action: 'ai_convert', notes: formData.notes, treatmentTypes: formData.treatmentTypes, disease: formData.acupunctureDisease })
+              });
+              const result = await response.json();
+              if (result.success) setFormData(prev => ({ ...prev, notes: result.text }));
+              else setSaveError("AIエラー: " + result.error);
+            } catch (error) { setSaveError("通信エラー: 接続を確認してください。"); } 
+            finally { setIsGeneratingAI(false); }
+          };
+
+          const handleSave = async () => {
+            if (!formData.patientName) return alert("患者名を選択してください。");
+            if (GAS_WEB_APP_URL.includes('ここにコピーした')) return alert("設定エラー: GASのURLが設定されていません。");
+            setIsSaving(true); setSaveError('');
+            
+            const canvas = canvasRef.current;
+            let imageData = '';
+            const ctx = canvas.getContext('2d');
+            const pixelBuffer = new Uint32Array(ctx.getImageData(0, 0, canvas.width, canvas.height).data.buffer);
+            if(pixelBuffer.some(color => color !== 0)) imageData = canvas.toDataURL('image/png');
+
+            try {
+              const response = await fetch(GAS_WEB_APP_URL, {
+                method: 'POST', headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify({ action: 'save_record', ...formData, markingImage: imageData })
+              });
+              const result = await response.json();
+              if (result.success) {
+                  setIsSaved(true);
+                  setTimeout(() => { 
+                      setIsSaved(false); setActiveTab('patients');
+                      setFormData(prev => ({ ...prev, patientName: '', chiefComplaint: '', treatmentTypes: { acupuncture: false, massage: false }, acupunctureDisease: '', acupunctureDetails: [], massageAreas: [], massageDetails: [], notes: '' }));
+                      if(canvasRef.current) clearCanvas();
+                  }, 2000);
+              } else setSaveError("保存エラー: " + result.error);
+            } catch (error) { setSaveError("通信エラー: 接続を確認してください。"); } 
+            finally { setIsSaving(false); }
+          };
+
+          const openGoogleMapsRoute = (address) => window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`, '_blank');
+          const startRecording = (patientName) => { setFormData(prev => ({ ...prev, patientName: patientName, staffName: currentStaff })); setActiveTab('record'); window.scrollTo(0, 0); };
+
+          return (
+            <div className="min-h-screen bg-gray-50 pb-24">
+              <header className="bg-emerald-600 text-white p-4 sticky top-0 z-10 shadow-md">
+                <h1 className="text-xl font-bold text-center">訪問鍼灸アプリ</h1>
+              </header>
+
+              {saveError && (
+                  <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 m-4 rounded flex items-center gap-2">
+                      <AlertCircle className="w-5 h-5 shrink-0" /><p className="text-sm font-bold">{saveError}</p>
+                  </div>
+              )}
+
+              {activeTab === 'patients' && (
+                <main className="p-4 max-w-md mx-auto space-y-4">
+                    <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 mb-6 sticky top-16 z-10">
+                        <label className="text-xs font-bold text-gray-500 mb-2 block">自分の名前を選択してください</label>
+                        <div className="flex gap-2">
+                            {STAFF_NAMES.map(staff => (
+                                <button key={staff} onClick={() => setCurrentStaff(staff)} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-colors ${currentStaff === staff ? 'bg-emerald-600 text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{staff}</button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <h2 className="text-lg font-semibold text-gray-700 flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2"><Calendar className="w-5 h-5 text-emerald-500" /> 本日の訪問予定</div>
+                        <span className="text-sm bg-emerald-100 text-emerald-800 px-2 py-1 rounded-full font-bold">担当: {currentStaff}</span>
+                    </h2>
+                    
+                    {filteredSchedule.length === 0 ? (
+                        <div className="text-center py-10 text-gray-500 bg-white rounded-xl border border-dashed border-gray-300">本日の訪問予定はありません。</div>
+                    ) : (
+                        filteredSchedule.map(patient => (
+                            <div key={patient.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 relative overflow-hidden border-l-4 border-l-emerald-500">
+                                <div className="flex justify-between items-start mb-3">
+                                    <div>
+                                        <div className="text-emerald-600 font-bold text-lg mb-1">{patient.time}</div>
+                                        <h3 className="text-lg font-bold text-gray-800">{patient.name} 様</h3>
+                                        <span className="inline-block px-2 py-1 bg-orange-100 text-orange-800 text-xs font-bold rounded mt-1">{patient.status}</span>
+                                    </div>
+                                    <button onClick={() => startRecording(patient.name)} className="flex flex-col items-center justify-center bg-emerald-50 text-emerald-600 p-2 rounded-lg border border-emerald-100 hover:bg-emerald-100 transition-colors">
+                                        <Pen className="w-5 h-5 mb-1" />
+                                        <span className="text-[10px] font-bold">記録する</span>
+                                    </button>
+                                </div>
+                                <div className="space-y-2 text-sm text-gray-600 mb-4">
+                                    <div className="flex items-start gap-2"><MapPin className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" /><span>{patient.address}</span></div>
+                                    <div className="flex items-center gap-2"><Phone className="w-4 h-4 text-gray-400 shrink-0" /><a href={`tel:${patient.phone}`} className="text-blue-500 hover:underline">{patient.phone}</a></div>
+                                </div>
+                                <button onClick={() => openGoogleMapsRoute(patient.address)} className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg shadow-sm">
+                                    <Navigation className="w-5 h-5" />現在地からルート案内
+                                </button>
+                            </div>
+                        ))
+                    )}
+                </main>
+              )}
+
+              {activeTab === 'record' && (
+                <main className="p-4 max-w-md mx-auto space-y-6">
+                  <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100 flex items-center gap-2 text-emerald-800 font-bold mb-4">
+                     <UserCircle className="w-5 h-5" /> 担当者: {formData.staffName}
+                  </div>
+                  
+                  <section className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                    <h2 className="text-lg font-semibold text-gray-700 mb-4 flex items-center gap-2"><FileText className="w-5 h-5 text-emerald-500" /> レセプト情報</h2>
+                    <div className="space-y-5">
+                      <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+                        <label className="block text-sm font-medium text-gray-600 mb-2 flex items-center gap-1"><MapPin className="w-4 h-4" /> 場所・距離</label>
+                        <div className="flex gap-2 mb-3">
+                           <button onClick={() => handleRadioChange('locationType', '来院')} className={`flex-1 py-2 text-sm rounded-lg border font-medium ${formData.locationType === '来院' ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-white text-gray-700 border-gray-300'}`}>来院</button>
+                            <button onClick={() => handleRadioChange('locationType', '往診')} className={`flex-1 py-2 text-sm rounded-lg border font-medium ${formData.locationType === '往診' ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-white text-gray-700 border-gray-300'}`}>往診</button>
+                        </div>
+                        {formData.locationType === '往診' && (
+                          <div className="flex gap-2">
+                             <button onClick={() => handleRadioChange('distance', '〜4km')} className={`flex-1 py-2 text-sm rounded-lg border font-medium ${formData.distance === '〜4km' ? 'bg-indigo-400 text-white border-indigo-400' : 'bg-white text-gray-700 border-gray-300'}`}>〜4km</button>
+                              <button onClick={() => handleRadioChange('distance', '4km超〜16km')} className={`flex-1 py-2 text-sm rounded-lg border font-medium ${formData.distance === '4km超〜16km' ? 'bg-indigo-400 text-white border-indigo-400' : 'bg-white text-gray-700 border-gray-300'}`}>4km超〜16km</button>
+                          </div>
+                        )}
+                      </div>
+                       <div>
+                        <label className="block text-sm font-medium text-gray-600 mb-2 flex items-center gap-1"><Percent className="w-4 h-4" /> 負担割合</label>
+                        <div className="grid grid-cols-4 gap-2">
+                          {INSURANCE_RATES.map(rate => (
+                            <button key={rate} onClick={() => handleRadioChange('insuranceRate', rate)} className={`py-2 text-sm rounded-lg border font-medium ${formData.insuranceRate === rate ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-white text-gray-700 border-gray-300'}`}>{rate}</button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                    <h2 className="text-lg font-semibold text-gray-700 mb-4 flex items-center gap-2"><User className="w-5 h-5 text-emerald-500" /> 患者情報</h2>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-600 mb-1">患者名 <span className="text-red-500">*</span></label>
+                        <input type="text" readOnly value={formData.patientName} className="w-full p-3 border border-gray-200 rounded-lg bg-gray-50 text-gray-800 font-bold" />
+                      </div>
+                      <div>
+                         <input type="date" name="date" value={formData.date} onChange={handleInputChange} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500" />
+                      </div>
+                       <div>
+                        <textarea name="chiefComplaint" rows="2" value={formData.chiefComplaint} onChange={handleInputChange} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500" placeholder="主訴 (例: 腰の痛みなど)"></textarea>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                    <h2 className="text-lg font-semibold text-gray-700 mb-4 flex items-center gap-2"><Stethoscope className="w-5 h-5 text-emerald-500" /> 施術内容</h2>
+                    <div className="flex gap-4 mb-4">
+                      <label className={`flex-1 flex items-center justify-center p-3 rounded-lg border-2 font-bold cursor-pointer transition-colors ${formData.treatmentTypes.acupuncture ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-gray-200 text-gray-500'}`}>
+                        <input type="checkbox" className="hidden" checked={formData.treatmentTypes.acupuncture} onChange={() => handleTypeChange('acupuncture')} /> 鍼灸
+                      </label>
+                      <label className={`flex-1 flex items-center justify-center p-3 rounded-lg border-2 font-bold cursor-pointer transition-colors ${formData.treatmentTypes.massage ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-gray-200 text-gray-500'}`}>
+                        <input type="checkbox" className="hidden" checked={formData.treatmentTypes.massage} onChange={() => handleTypeChange('massage')} /> マッサージ
+                      </label>
+                    </div>
+                     {formData.treatmentTypes.acupuncture && (
+                        <div className="p-3 bg-emerald-50/50 rounded-lg border border-emerald-100 space-y-4 mb-4">
+                          <div>
+                            <p className="text-sm font-bold text-emerald-800 mb-2">傷病名</p>
+                            <div className="flex flex-wrap gap-2">
+                              {ACUPUNCTURE_DISEASES.map(d => <button key={d} onClick={() => setFormData(prev => ({...prev, acupunctureDisease: d}))} className={`px-3 py-2 text-sm rounded-lg border ${formData.acupunctureDisease === d ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-white text-gray-700 border-gray-300'}`}>{d}</button>)}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                       {formData.treatmentTypes.massage && (
+                        <div className="p-3 bg-blue-50/50 rounded-lg border border-blue-100 space-y-4">
+                          <div>
+                            <p className="text-sm font-bold text-blue-800 mb-2">施術部位</p>
+                            <div className="flex flex-wrap gap-2">
+                              {MASSAGE_AREAS.map(a => <button key={a} onClick={() => handleDetailToggle('massage', a, true)} className={`px-3 py-2 text-sm rounded-lg border ${formData.massageAreas.includes(a) ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-gray-700 border-gray-300'}`}>{a}</button>)}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                  </section>
+
+                  <section className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                    <h2 className="text-lg font-semibold text-gray-700 mb-4 flex items-center gap-2"><Pen className="w-5 h-5 text-emerald-500" /> 人体図マーキング</h2>
+                    <div className="mb-2 flex justify-between items-center bg-gray-50 p-2 rounded-lg">
+                      <div className="flex gap-3">
+                        <button onClick={() => setColor('#ef4444')} className={`w-8 h-8 rounded-full bg-red-500 shadow-sm ${color === '#ef4444' ? 'ring-4 ring-red-200 scale-110' : ''}`}></button>
+                        <button onClick={() => setColor('#3b82f6')} className={`w-8 h-8 rounded-full bg-blue-500 shadow-sm ${color === '#3b82f6' ? 'ring-4 ring-blue-200 scale-110' : ''}`}></button>
+                      </div>
+                      <button onClick={clearCanvas} className="flex items-center gap-1 text-sm text-gray-600 bg-white px-3 py-1.5 rounded-lg shadow-sm border"><Eraser className="w-4 h-4" /> クリア</button>
+                    </div>
+                    <div ref={containerRef} className="relative w-full aspect-[1.1/1] bg-white border-2 border-gray-200 rounded-lg overflow-hidden touch-none">
+                      <div className="absolute inset-0 flex flex-col pointer-events-none opacity-30 bg-gray-100 p-2">
+                        <div className="flex-1 flex gap-2">
+                            <div className="flex-[4] border-2 border-dashed border-gray-400 rounded flex items-center justify-center">前面</div>
+                            <div className="flex-[4] border-2 border-dashed border-gray-400 rounded flex items-center justify-center">背面</div>
+                            <div className="flex-[3] flex flex-col gap-2">
+                                <div className="flex-1 border-2 border-dashed border-gray-400 rounded flex items-center justify-center">顔</div>
+                                <div className="flex-[1.5] border-2 border-dashed border-gray-400 rounded"></div>
+                            </div>
+                        </div>
+                    </div>
+                      <canvas ref={canvasRef} className="absolute inset-0 cursor-crosshair z-10" onMouseDown={startDrawing} onMouseMove={draw} onMouseUp={stopDrawing} onMouseOut={stopDrawing} onTouchStart={startDrawing} onTouchMove={draw} onTouchEnd={stopDrawing}/>
+                    </div>
+                  </section>
+
+                  <section className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 border-l-4 border-l-purple-500 pb-20">
+                    <h2 className="text-lg font-semibold text-gray-700 mb-4 flex items-center gap-2"><FileText className="w-5 h-5 text-emerald-500" /> 特記事項 (AI連携)</h2>
+                    <div className="space-y-3">
+                      <textarea name="notes" rows="4" value={formData.notes} onChange={handleInputChange} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500" placeholder="例: 肩背腰臀部下肢ma下肢st"></textarea>
+                      <button onClick={generateAIText} disabled={isGeneratingAI || isSaving} className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-purple-500 to-indigo-500 text-white font-bold py-3 px-4 rounded-lg shadow-sm disabled:opacity-70">
+                        {isGeneratingAI ? <><Loader2 className="w-5 h-5 animate-spin" /> AI処理中...</> : <><Sparkles className="w-5 h-5" /> AIで文章を整える</>}
+                      </button>
+                    </div>
+                  </section>
+                </main>
+              )}
+
+              {/* --- 下部ナビゲーションバー --- */}
+              <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50 px-4 py-2 flex justify-around shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.1)] pb-safe">
+                <button onClick={() => setActiveTab('patients')} className={`flex flex-col items-center p-2 min-w-[80px] rounded-lg transition-colors ${activeTab === 'patients' ? 'text-emerald-600' : 'text-gray-400'}`}>
+                    <Calendar className={`w-6 h-6 mb-1 ${activeTab === 'patients' ? 'fill-emerald-100' : ''}`} />
+                    <span className="text-xs font-bold">訪問予定</span>
+                </button>
+                
+                <div className="relative -top-6">
+                    <button onClick={() => setActiveTab('record')} className={`flex items-center justify-center w-16 h-16 rounded-full shadow-lg ${activeTab === 'record' ? 'bg-emerald-700 scale-110' : 'bg-emerald-500'}`}>
+                        <Pen className="w-7 h-7 text-white" />
+                    </button>
+                </div>
+
+                <button onClick={() => activeTab === 'record' ? handleSave() : alert('記録タブから保存してください')} disabled={isSaving || (activeTab !== 'record')} className={`flex flex-col items-center p-2 min-w-[80px] rounded-lg transition-colors ${(activeTab === 'record' && !isSaving) ? 'text-emerald-600' : 'text-gray-300'}`}>
+                    {isSaved ? <CheckCircle className="w-6 h-6 mb-1 text-emerald-500" /> : isSaving ? <Loader2 className="w-6 h-6 mb-1 text-emerald-500 animate-spin" /> : <Save className="w-6 h-6 mb-1" />}
+                    <span className="text-xs font-bold">{isSaving ? '送信中...' : '保存送信'}</span>
+                </button>
+              </div>
+            </div>
+          );
+        }
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
