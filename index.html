@@ -29,7 +29,7 @@
     import { Pen, Eraser, Save, User, FileText, CheckCircle, Stethoscope, MapPin, Percent, UserCircle, RefreshCcw, Sparkles, Loader2, Info, Users, Navigation, Phone, Calendar, AlertCircle } from 'lucide-react';
 
     // ★ご自身のGASのURLに書き換えてください
-    const GAS_WEB_APP_URL = 'YOUR_GAS_WEB_APP_URL';
+    const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyzKXEjzeCnt25coqe2ItRkgFhu-rQUMY5hZnVi2wE-6A8Rpa_oorPPkFNYmOPUIpBBNA/exec';
 
     const STAFF_NAMES = ['森', '野口', '西山', '岡島'];
     const INSURANCE_RATES = ['1割', '2割', '3割', '0割'];
@@ -67,7 +67,7 @@
       // 【追加】GASからスケジュールを取得する関数
       // ==========================================
       const fetchSchedule = async () => {
-        if (GAS_WEB_APP_URL.includes('https://script.google.com/macros/s/AKfycbyzKXEjzeCnt25coqe2ItRkgFhu-rQUMY5hZnVi2wE-6A8Rpa_oorPPkFNYmOPUIpBBNA/exec')) return;
+        if (GAS_WEB_APP_URL.includes('YOUR_GAS_WEB_APP_URL')) return;
         setIsLoadingSchedule(true);
         try {
           const response = await fetch(GAS_WEB_APP_URL);
