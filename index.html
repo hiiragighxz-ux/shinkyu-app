@@ -47,11 +47,12 @@
       const [currentStaff, setCurrentStaff] = useState('森'); 
       const [scheduleData, setScheduleData] = useState([]);
       const [patientsData, setPatientsData] = useState([]);
+      const [lastRecordsData, setLastRecordsData] = useState({});
       const [isLoading, setIsLoading] = useState(false);
       const [expandedPatientId, setExpandedPatientId] = useState(null); // アコーディオン用
 
       const [formData, setFormData] = useState({
-        staffName: '森', visitType: '再検', patientName: '', date: new Date().toISOString().split('T')[0], chiefComplaint: '',
+        staffName: '森', visitType: '再検', patientName: '', date: getJstTodayYmd(), chiefComplaint: '',
         treatmentTypes: { acupuncture: false, massage: false }, acupunctureDisease: '', acupunctureAreas: [], acupunctureDetails: [],
         massageAreas: [], massageDetails: [], notes: ''
       });
@@ -65,6 +66,138 @@
       const [marks, setMarks] = useState([]); 
       const [currentMarkType, setCurrentMarkType] = useState('red-circle'); 
 
+      function getJstTodayYmd() {
+        const jstDate = new Date(Date.now() + 9 * 60 * 60 * 1000);
+        return jstDate.toISOString().slice(0, 10);
+      }
+
+      function normalizeYmd(value) {
+        if (!value) return '';
+        if (value instanceof Date && !Number.isNaN(value.getTime())) {
+          return new Date(value.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        }
+        if (typeof value === 'number') {
+          const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+          const date = new Date(excelEpoch.getTime() + value * 24 * 60 * 60 * 1000);
+          return date.toISOString().slice(0, 10);
+        }
+        const text = String(value).trim();
+        if (/^\d{4}-\d{2}-\d{2}T/.test(text)) {
+          const parsedIso = new Date(text);
+          return Number.isNaN(parsedIso.getTime()) ? '' : new Date(parsedIso.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        }
+        const ymd = text.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+        if (ymd) return `${ymd[1]}-${ymd[2].padStart(2, '0')}-${ymd[3].padStart(2, '0')}`;
+        const parsed = new Date(text);
+        if (!Number.isNaN(parsed.getTime())) {
+          return new Date(parsed.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        }
+        return '';
+      }
+
+      const pickValue = (source, keys) => {
+        if (!source) return undefined;
+        for (const key of keys) {
+          if (source[key] !== undefined && source[key] !== null && source[key] !== '') return source[key];
+        }
+        return undefined;
+      };
+
+      const toArray = (value) => {
+        if (Array.isArray(value)) return value.filter(Boolean);
+        if (!value) return [];
+        return String(value).split(/[、,\n]/).map(item => item.trim()).filter(Boolean);
+      };
+
+      const isBlank = (value) => value === undefined || value === null || String(value).trim() === '';
+
+      const getPatientName = (item) => pickValue(item, ['name', 'patientName', '患者名']) || '';
+      const getStaffName = (item) => pickValue(item, ['staff', 'staffName', '担当者']) || '';
+      const getScheduleDate = (item) => pickValue(item, ['date', 'visitDate', '日付', '訪問日']) || '';
+
+      const getPatientMissingFields = (patient) => {
+        const fields = [
+          { label: '住所', keys: ['address', '住所'] },
+          { label: '電話番号', keys: ['phone', 'tel', 'telephone', '電話番号', '電話'] },
+          { label: '生年月日', keys: ['birthDate', 'birthday', 'dateOfBirth', '生年月日'] },
+          { label: '目標', keys: ['goal', '目標'] },
+          { label: '注意事項', keys: ['notes', 'caution', 'cautions', '注意事項'] },
+          { label: '内容', keys: ['content', 'treatmentContent', 'contents', '内容'] }
+        ];
+        return fields.filter(field => isBlank(pickValue(patient, field.keys))).map(field => field.label);
+      };
+
+      const getLastRecordForPatient = (patientName) => {
+        if (!patientName) return null;
+        const patient = patientsData.find(p => getPatientName(p) === patientName);
+        return patient?.lastRecord || lastRecordsData[patientName] || null;
+      };
+
+      const normalizeTreatmentTypes = (record) => {
+        const raw = pickValue(record, ['treatmentTypes', '施術種別']);
+        if (raw && typeof raw === 'object') {
+          return {
+            acupuncture: !!raw.acupuncture || !!raw.鍼灸,
+            massage: !!raw.massage || !!raw.マッサージ
+          };
+        }
+        const text = String(raw || pickValue(record, ['treatmentType', 'type']) || '');
+        return {
+          acupuncture: text.includes('鍼灸') || text.toLowerCase().includes('acupuncture'),
+          massage: text.includes('マッサージ') || text.toLowerCase().includes('massage')
+        };
+      };
+
+      const copyLastRecord = () => {
+        const lastRecord = getLastRecordForPatient(formData.patientName);
+        if (!lastRecord) return alert('この患者の前回記録が見つかりません。');
+        const copiedTreatmentTypes = normalizeTreatmentTypes(lastRecord);
+        setFormData(prev => ({
+          ...prev,
+          chiefComplaint: pickValue(lastRecord, ['chiefComplaint', '主訴']) || '',
+          treatmentTypes: copiedTreatmentTypes.acupuncture || copiedTreatmentTypes.massage ? copiedTreatmentTypes : prev.treatmentTypes,
+          acupunctureDisease: pickValue(lastRecord, ['acupunctureDisease', 'disease', '鍼灸傷病名', '傷病名']) || '',
+          acupunctureAreas: toArray(pickValue(lastRecord, ['acupunctureAreas', '鍼灸部位'])),
+          acupunctureDetails: toArray(pickValue(lastRecord, ['acupunctureDetails', 'acupunctureTechniques', '鍼灸手技'])),
+          massageAreas: toArray(pickValue(lastRecord, ['massageAreas', 'マッサージ部位'])),
+          massageDetails: toArray(pickValue(lastRecord, ['massageDetails', 'massageTechniques', 'マッサージ手技'])),
+          notes: pickValue(lastRecord, ['notes', 'specialNotes', '特記事項']) || ''
+        }));
+      };
+
+      const buildSaveConfirmation = () => {
+        const treatmentLabels = [
+          formData.treatmentTypes.acupuncture ? '鍼灸' : '',
+          formData.treatmentTypes.massage ? 'マッサージ' : ''
+        ].filter(Boolean);
+        const hardErrors = [];
+        const warnings = [];
+        if (!formData.patientName) hardErrors.push('患者名');
+        if (!formData.date) hardErrors.push('日付');
+        if (treatmentLabels.length === 0) hardErrors.push('施術種別');
+        if (formData.treatmentTypes.acupuncture) {
+          if (!formData.acupunctureDisease) warnings.push('鍼灸: 傷病名が未入力です');
+          if (formData.acupunctureAreas.length === 0) warnings.push('鍼灸: 部位が未入力です');
+          if (formData.acupunctureDetails.length === 0) warnings.push('鍼灸: 手技が未入力です');
+        }
+        if (formData.treatmentTypes.massage) {
+          if (formData.massageAreas.length === 0) warnings.push('マッサージ: 部位が未入力です');
+          if (formData.massageDetails.length === 0) warnings.push('マッサージ: 手技が未入力です');
+        }
+        const lines = [
+          '以下の内容で保存します。',
+          '',
+          `患者名: ${formData.patientName || '未入力'}`,
+          `日付: ${formData.date || '未入力'}`,
+          `施術種別: ${treatmentLabels.join('、') || '未入力'}`,
+          `施術部位: ${[...formData.acupunctureAreas, ...formData.massageAreas].join('、') || '未入力'}`,
+          `手技: ${[...formData.acupunctureDetails, ...formData.massageDetails].join('、') || '未入力'}`,
+          `特記事項: ${formData.notes || 'なし'}`
+        ];
+        if (warnings.length > 0) lines.push('', '警告:', ...warnings.map(warning => `・${warning}`));
+        return { hardErrors, message: lines.join('\n') };
+      };
+
       const fetchData = async () => {
         if (GAS_WEB_APP_URL.includes('YOUR_GAS_WEB_APP_URL')) return;
         setIsLoading(true);
@@ -74,6 +207,7 @@
           if (result.success) {
             setScheduleData(result.schedule);
             setPatientsData(result.patients);
+            setLastRecordsData(result.lastRecords || {});
           } else alert("データ取得エラー: " + result.error);
         } catch (error) { console.error("通信エラー:", error); } 
         finally { setIsLoading(false); }
@@ -82,8 +216,8 @@
       useEffect(() => { fetchData(); }, []);
       useEffect(() => { setFormData(prev => ({ ...prev, staffName: currentStaff })); }, [currentStaff]);
 
-      const filteredSchedule = scheduleData.filter(item => item.staff === currentStaff);
-      const filteredPatients = patientsData.filter(item => item.staff === currentStaff || !item.staff); // 担当なしも一応表示
+      const filteredSchedule = scheduleData.filter(item => getStaffName(item) === currentStaff && normalizeYmd(getScheduleDate(item)) === getJstTodayYmd());
+      const filteredPatients = patientsData.filter(item => getStaffName(item) === currentStaff || !getStaffName(item)); // 担当なしも一応表示
 
       // --- スタンプ機能 ---
       useEffect(() => {
@@ -131,13 +265,14 @@
 
       // --- 予定追加処理 ---
       const addToSchedule = async (patient) => {
-        const time = prompt(`${patient.name}様の訪問時刻を入力してください\n(例: 10:00)`);
+        const patientName = getPatientName(patient);
+        const time = prompt(`${patientName}様の訪問時刻を入力してください\n(例: 10:00)`);
         if (!time) return;
         setIsLoading(true);
         try {
           const response = await fetch(GAS_WEB_APP_URL, {
             method: 'POST', headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({ action: 'add_schedule', date: new Date().toISOString().split('T')[0], staffName: currentStaff, patientName: patient.name, time: time, address: patient.address, phone: patient.phone })
+            body: JSON.stringify({ action: 'add_schedule', date: getJstTodayYmd(), staffName: currentStaff, patientName: patientName, time: time, address: patient.address, phone: pickValue(patient, ['phone', 'tel', 'telephone', '電話番号', '電話']) })
           });
           const result = await response.json();
           if (result.success) { alert("予定を追加しました"); fetchData(); setActiveTab('schedule'); }
@@ -161,7 +296,41 @@
       };
 
       const handleSave = async () => {
-        if (!formData.patientName) return alert("患者名を選択してください。");
+        const missingItems = [];
+        const treatmentLabels = [
+          formData.treatmentTypes.acupuncture ? '鍼灸' : '',
+          formData.treatmentTypes.massage ? 'マッサージ' : ''
+        ].filter(Boolean);
+
+        if (!formData.patientName) missingItems.push('患者名');
+        if (!formData.date) missingItems.push('日付');
+        if (treatmentLabels.length === 0) missingItems.push('施術種別（鍼灸・マッサージのいずれか）');
+        if (formData.treatmentTypes.acupuncture) {
+          if (!formData.acupunctureDisease) missingItems.push('鍼灸傷病名');
+          if (formData.acupunctureAreas.length === 0) missingItems.push('鍼灸部位');
+          if (formData.acupunctureDetails.length === 0) missingItems.push('鍼灸手技');
+        }
+        if (formData.treatmentTypes.massage) {
+          if (formData.massageAreas.length === 0) missingItems.push('マッサージ部位');
+          if (formData.massageDetails.length === 0) missingItems.push('マッサージ手技');
+        }
+        if (missingItems.length > 0) {
+          alert(['不足項目があります。保存できません。', '', ...missingItems.map(item => `・${item}`)].join('\n'));
+          return;
+        }
+
+        const confirmationMessage = [
+          '以下の内容で保存します。',
+          '',
+          `患者名: ${formData.patientName}`,
+          `日付: ${formData.date}`,
+          `施術種別: ${treatmentLabels.join('、')}`,
+          `施術部位: ${[...formData.acupunctureAreas, ...formData.massageAreas].join('、')}`,
+          `手技: ${[...formData.acupunctureDetails, ...formData.massageDetails].join('、')}`,
+          `特記事項: ${formData.notes || 'なし'}`
+        ].join('\n');
+        if (!window.confirm(confirmationMessage)) return;
+
         setIsSaving(true); setSaveError('');
         let imageData = '';
         if (marks.length > 0 && canvasRef.current) imageData = canvasRef.current.toDataURL('image/png');
@@ -188,7 +357,7 @@
             <h1 className="text-xl font-bold text-center flex items-center justify-center gap-2"><Stethoscope className="w-6 h-6" />訪問鍼灸アプリ</h1>
           </header>
 
-          <main className="p-4 max-w-lg mx-auto">
+          <main className="p-4 pb-[calc(16rem+env(safe-area-inset-bottom))] sm:pb-36 max-w-lg mx-auto">
             {saveError && (
               <div className="bg-red-50 text-red-600 p-3 rounded-lg mb-4 flex items-center gap-2 border border-red-200">
                 <AlertCircle className="w-5 h-5 flex-shrink-0" /><span className="text-sm">{saveError}</span>
@@ -217,20 +386,22 @@
                 <div className="space-y-4">
                   {isLoading ? <div className="text-center py-8 text-gray-400"><Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" /></div>
                   : filteredSchedule.length === 0 ? <div className="bg-white p-6 rounded-xl shadow-sm text-center text-gray-500">予定はありません。<br/>患者リストから追加してください。</div>
-                  : filteredSchedule.map(patient => (
-                    <div key={patient.id} className="bg-white p-4 rounded-xl shadow-sm border-l-4 border-l-emerald-500 relative">
+                  : filteredSchedule.map(patient => {
+                    const patientName = getPatientName(patient);
+                    return (
+                    <div key={patient.id || `${patientName}-${patient.time}`} className="bg-white p-4 rounded-xl shadow-sm border-l-4 border-l-emerald-500 relative">
                       <div className="flex justify-between items-start mb-3">
                         <div>
-                          <div className="text-xl font-bold text-gray-800 flex items-baseline gap-2">{patient.time} <span className="text-lg">{patient.name} 様</span></div>
+                          <div className="text-xl font-bold text-gray-800 flex items-baseline gap-2">{patient.time} <span className="text-lg">{patientName} 様</span></div>
                         </div>
-                        <button onClick={() => startRecording(patient.name)} className="bg-emerald-50 text-emerald-600 p-2 rounded-lg font-bold text-sm flex items-center gap-1"><Pen className="w-4 h-4"/>記録</button>
+                        <button onClick={() => startRecording(patientName)} className="bg-emerald-50 text-emerald-600 p-2 rounded-lg font-bold text-sm flex items-center gap-1"><Pen className="w-4 h-4"/>記録</button>
                       </div>
                       <div className="pt-2 border-t border-gray-100 text-sm text-gray-600 flex flex-col gap-2">
                         <div className="flex gap-2"><MapPin className="w-4 h-4"/>{patient.address}</div>
-                        <div className="flex gap-2"><Phone className="w-4 h-4"/><a href={`tel:${patient.phone}`} className="text-blue-500 font-medium">{patient.phone}</a></div>
+                        <div className="flex gap-2"><Phone className="w-4 h-4"/><a href={`tel:${pickValue(patient, ['phone', 'tel', 'telephone', '電話番号', '電話']) || ''}`} className="text-blue-500 font-medium">{pickValue(patient, ['phone', 'tel', 'telephone', '電話番号', '電話']) || '-'}</a></div>
                       </div>
                     </div>
-                  ))}
+                  )})}
                 </div>
               </section>
             )}
@@ -244,34 +415,50 @@
                 </div>
                 <div className="space-y-3">
                   {isLoading ? <div className="text-center py-8 text-gray-400"><Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" /></div>
-                  : filteredPatients.map(p => (
-                    <div key={p.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                      <div className="p-4 flex justify-between items-center cursor-pointer hover:bg-gray-50" onClick={() => setExpandedPatientId(expandedPatientId === p.id ? null : p.id)}>
-                        <div className="font-bold text-lg text-gray-800">{p.name} 様</div>
-                        {expandedPatientId === p.id ? <ChevronUp className="w-5 h-5 text-gray-400"/> : <ChevronDown className="w-5 h-5 text-gray-400"/>}
+                  : filteredPatients.map(p => {
+                    const patientName = getPatientName(p);
+                    const patientKey = p.id || patientName;
+                    const missingFields = getPatientMissingFields(p);
+                    return (
+                    <div key={patientKey} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                      <div className="p-4 flex justify-between items-center cursor-pointer hover:bg-gray-50" onClick={() => setExpandedPatientId(expandedPatientId === patientKey ? null : patientKey)}>
+                        <div>
+                          <div className="font-bold text-lg text-gray-800">{patientName} 様</div>
+                          {missingFields.length > 0 && <div className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded bg-amber-50 text-amber-700 text-xs font-bold border border-amber-200"><AlertCircle className="w-3 h-3" />未入力あり</div>}
+                        </div>
+                        {expandedPatientId === patientKey ? <ChevronUp className="w-5 h-5 text-gray-400"/> : <ChevronDown className="w-5 h-5 text-gray-400"/>}
                       </div>
                       
-                      {expandedPatientId === p.id && (
+                      {expandedPatientId === patientKey && (
                         <div className="px-4 pb-4 border-t border-gray-100 pt-3 bg-gray-50 text-sm space-y-2 text-gray-700">
+                          {missingFields.length > 0 && (
+                            <div className="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-lg">
+                              <div className="font-bold flex items-center gap-1"><AlertCircle className="w-4 h-4" />未入力あり</div>
+                              <div className="mt-1 text-xs">不足項目: {missingFields.join('、')}</div>
+                            </div>
+                          )}
                           <div className="grid grid-cols-2 gap-2 mb-3">
                             <div><span className="text-xs text-gray-500 block">年齢</span>{p.age || '-'}</div>
                             <div><span className="text-xs text-gray-500 block">負担割合</span>{p.insuranceRate || '-'}</div>
                             <div><span className="text-xs text-gray-500 block">医療証</span>{p.hasMedicalCert || '-'}</div>
                             <div><span className="text-xs text-gray-500 block">キーパーソン</span>{p.keyPersonName} ({p.keyPersonRelation})</div>
                           </div>
-                          <div><span className="text-xs text-gray-500 block">住所</span>{p.address}</div>
+                          <div><span className="text-xs text-gray-500 block">住所</span>{p.address || '-'}</div>
+                          <div><span className="text-xs text-gray-500 block">電話番号</span>{pickValue(p, ['phone', 'tel', 'telephone', '電話番号', '電話']) || '-'}</div>
+                          <div><span className="text-xs text-gray-500 block">生年月日</span>{pickValue(p, ['birthDate', 'birthday', 'dateOfBirth', '生年月日']) || '-'}</div>
                           <div><span className="text-xs text-gray-500 block">目標</span>{p.goal || '-'}</div>
                           <div><span className="text-xs text-gray-500 block">注意事項</span><span className="text-red-500 font-medium">{p.notes || '-'}</span></div>
+                          <div><span className="text-xs text-gray-500 block">内容</span>{pickValue(p, ['content', 'treatmentContent', 'contents', '内容']) || '-'}</div>
                           <div><span className="text-xs text-gray-500 block">特記事項</span>{p.specialNotes || '-'}</div>
                           
                           <div className="flex gap-2 pt-3 mt-2 border-t border-gray-200">
                             <button onClick={() => addToSchedule(p)} className="flex-1 bg-blue-100 text-blue-700 py-2 rounded-lg font-bold flex justify-center items-center gap-1"><Plus className="w-4 h-4"/>予定に追加</button>
-                            <button onClick={() => startRecording(p.name)} className="flex-1 bg-emerald-100 text-emerald-700 py-2 rounded-lg font-bold flex justify-center items-center gap-1"><Pen className="w-4 h-4"/>直接記録</button>
+                            <button onClick={() => startRecording(patientName)} className="flex-1 bg-emerald-100 text-emerald-700 py-2 rounded-lg font-bold flex justify-center items-center gap-1"><Pen className="w-4 h-4"/>直接記録</button>
                           </div>
                         </div>
                       )}
                     </div>
-                  ))}
+                  )})}
                 </div>
               </section>
             )}
@@ -290,9 +477,15 @@
                       <label className="block text-sm font-medium text-gray-600 mb-1">患者名 *</label>
                       <select name="patientName" value={formData.patientName} onChange={handleInputChange} className="w-full p-3 border border-gray-300 rounded-lg bg-white">
                         <option value="">選択してください</option>
-                        {patientsData.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
+                        {patientsData.map(p => {
+                          const patientName = getPatientName(p);
+                          return <option key={patientName} value={patientName}>{patientName}</option>;
+                        })}
                       </select>
                     </div>
+                    <button onClick={copyLastRecord} disabled={!formData.patientName} className="w-full flex justify-center gap-2 bg-amber-50 text-amber-700 font-bold py-3 px-4 rounded-lg border border-amber-200 disabled:opacity-50 disabled:cursor-not-allowed">
+                      <RefreshCcw className="w-5 h-5" />前回記録をコピー
+                    </button>
                     <div><label className="block text-sm font-medium text-gray-600 mb-1">日付</label><input type="date" name="date" value={formData.date} onChange={handleInputChange} className="w-full p-3 border border-gray-300 rounded-lg bg-white" /></div>
                     <div><label className="block text-sm font-medium text-gray-600 mb-1">訪問種別</label>
                       <div className="flex gap-2">
@@ -368,7 +561,7 @@
 
           {/* 右下フローティング保存ボタン (記録タブのみ表示) */}
           {activeTab === 'record' && (
-             <button onClick={handleSave} disabled={isSaving} className="fixed bottom-24 right-4 z-50 flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-6 rounded-full shadow-xl transition-all border-4 border-white">
+             <button onClick={handleSave} disabled={isSaving} className="fixed bottom-[calc(8.5rem+env(safe-area-inset-bottom))] sm:bottom-24 right-4 z-[60] flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-6 rounded-full shadow-xl transition-all border-4 border-white">
                {isSaving ? <Loader2 className="w-6 h-6 animate-spin" /> : <Save className="w-6 h-6" />}
                <span>保存する</span>
              </button>
